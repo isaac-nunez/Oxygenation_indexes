@@ -1,0 +1,428 @@
+---
+title: "oxigenation_indexes"
+author: "isaac_nunez"
+date: "20/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse); library(lubridate); library(data.table); library(readxl);library(patchwork);
+library(circlize)
+```
+
+
+
+```{r episodios de urgencias, include = F, warning = F}
+
+ruta <- "E:/Protocolos de investigación/Episodios urgencias innsz/"
+
+episodios_urgencias_total <- rbind(fread(str_c(ruta, "abril_2020_1.csv")),
+                             fread(str_c(ruta, "abril_2020_2.csv")),
+                             fread(str_c(ruta, "abril_2020_3.csv")),
+                             fread(str_c(ruta, "mayo_2020_1.csv")),
+                             fread(str_c(ruta, "mayo_2020_2.csv")),
+                             fread(str_c(ruta, "junio_2020_1.csv")),
+                             fread(str_c(ruta, "junio_2020_2.csv")),
+                             fread(str_c(ruta, "julio_2020_1.csv")),
+                             fread(str_c(ruta, "julio_2020_2.csv")),
+                             fread(str_c(ruta, "agosto_2020_1.csv")),
+                             fread(str_c(ruta, "agosto_2020_2.csv")),
+                             fread(str_c(ruta, "septiembre_2020_1.csv")),
+                             fread(str_c(ruta, "septiembre_2020_2.csv")),
+                             fread(str_c(ruta, "octubre_2020_1.csv")),
+                             fread(str_c(ruta, "octubre_2020_2.csv")),
+                             fread(str_c(ruta, "noviembre_2020_1.csv")),
+                             fread(str_c(ruta, "noviembre_2020_2.csv")),
+                             fread(str_c(ruta, "diciembre_2020_1.csv")),
+                             fread(str_c(ruta, "diciembre_2020_2.csv")),
+                             fread(str_c(ruta, "enero_2021_1.csv")),
+                             fread(str_c(ruta, "enero_2021_2.csv")),
+                             fread(str_c(ruta, "febrero_2021_1.csv")),
+                             fread(str_c(ruta, "febrero_2021_2.csv")),
+                             fread(str_c(ruta, "marzo_2021_1.csv")),
+                             fread(str_c(ruta, "marzo_2021_2.csv"))
+                             ) %>% 
+  rename(id_episodio = `ID episodio`,
+         registro = `No. de Registro`,
+         nombre = `Apellidos y nombre`,
+         edad = Edad,
+         sexo = Sexo, 
+         motivo_ingreso = `Motivo de ingreso`,
+         diagnostico_egreso = `Diagnostico de Egreso`,
+         tipo_episodio = `Tipo de episodio`,
+         fecha_ingreso = `Fecha de Ingreso`,
+         fecha_alta = `Fecha de alta`,
+         destino_alta = `Destino de alta`) %>% 
+  mutate(fecha_ingreso = dmy_hms(fecha_ingreso),
+         fecha_alta = dmy_hms(fecha_alta)) %>% 
+  group_by(id_episodio) %>% 
+  mutate(motivo_covid = any(
+    str_detect(motivo_ingreso, "COVID"),
+    str_detect(motivo_ingreso, "SARS"),
+    str_detect(motivo_ingreso, "SARS-COV"),
+    str_detect(motivo_ingreso, "sars-cov"),
+    str_detect(motivo_ingreso, "covid"),
+    str_detect(motivo_ingreso, "neumonia"),
+    str_detect(motivo_ingreso, "neumonía"),
+    str_detect(diagnostico_egreso, "SARS-COV"),
+    str_detect(diagnostico_egreso, "sars-cov"),
+    str_detect(diagnostico_egreso, "covid"),
+    str_detect(diagnostico_egreso, "neumonia"),
+    str_detect(diagnostico_egreso, "neumonía"),
+    str_detect(diagnostico_egreso, "COVID"))) 
+
+n_distinct(episodios_urgencias_total$registro)
+n_distinct(episodios_urgencias_total$id_episodio)
+
+
+episodios_urgencias_cov <- episodios_urgencias_total%>% 
+  filter(motivo_covid == T) %>% 
+  arrange(fecha_ingreso, .by_group=T) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  group_by(registro) %>% 
+  arrange(fecha_ingreso, .by_group=T) %>% 
+  slice(1) %>% 
+  ungroup()
+
+n_distinct(episodios_urgencias_cov$registro)
+
+
+episodios_urgencias_covid <- episodios_urgencias_cov %>% 
+  group_by(registro) %>% 
+  mutate(ubi_so2 = str_locate(motivo_ingreso, "SO2")[row_number(),1]) %>% 
+  filter(!is.na(ubi_so2)) %>% 
+  mutate(so2 = as.numeric(str_sub(motivo_ingreso, start = ubi_so2 + 3, end = ubi_so2 + 4))) %>% 
+  filter(!is.na(so2)&so2>10) %>% 
+  ungroup()
+
+n_distinct(episodios_urgencias_covid$registro)
+
+
+```
+
+```{r gasometrias fio2, include = F, warnings = F}
+#Información sobre FiO2
+ruta_fio2 <- "E:/Protocolos de investigación/Laboratorios covid19/fio2 arterial/"
+meses_labs <- c("abril_2020.xlsx",
+                "mayo_2020.xlsx",
+                "junio_2020.xlsx",
+                "julio_2020.xlsx",
+                "agosto_2020.xlsx",
+                "septiembre_2020.xlsx",
+                "octubre_2020.xlsx",
+                "noviembre_2020.xlsx",
+                "diciembre_2020.xlsx",
+                "enero_2021.xlsx",
+                "febrero_2021.xlsx",
+                "marzo_2021.xlsx")
+
+gaso_fio2 <- rbind(read_xlsx(str_c(ruta_fio2, meses_labs[1]), skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[2]), skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[3]), skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[4]), skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[5]),skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[6]),skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[7]),skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[8]),skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[9]),skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[10]),skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[11]),skip = 2),
+                   read_xlsx(str_c(ruta_fio2, meses_labs[12]),skip = 2)) %>% 
+  rename(numero_orden = `Num. de Orden`) %>% 
+  separate(ID, into = c("registro_1", "registro_2"), sep = " -") %>% 
+  mutate(registro = str_sub(registro_1, start = 4),
+         fecha_extract = str_sub(numero_orden, end = 6),
+         fecha = ymd(fecha_extract),
+         fio2 = Resultado) %>% 
+  filter(!is.na(fecha))
+
+```
+
+```{r gasometrias saturacion, include = F, warnings = F}
+#Información sobre saturación
+ruta_sat <- "E:/Protocolos de investigación/Laboratorios covid19/saturacion arterial/"
+
+gaso_sat <- rbind(read_xlsx(str_c(ruta_sat, meses_labs[1]), skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[2]), skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[3]), skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[4]), skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[5]),skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[6]),skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[7]),skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[8]),skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[9]),skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[10]),skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[11]),skip = 2),
+                   read_xlsx(str_c(ruta_sat, meses_labs[12]),skip = 2)) %>% 
+  rename(numero_orden = `Num. de Orden`) %>% 
+  separate(ID, into = c("registro_1", "registro_2"), sep = " -") %>% 
+  mutate(registro = str_sub(registro_1, start = 4),
+         fecha_extract = str_sub(numero_orden, end = 6),
+         fecha = ymd(fecha_extract),
+         sato2 = Resultado) %>% 
+  filter(!is.na(fecha))
+```
+
+```{r gasometrias presión de o2, include = F, warnings = F}
+#Información sobre PaO2
+ruta_po2 <- "E:/Protocolos de investigación/Laboratorios covid19/presion arterial o2/"
+
+gaso_po2 <- rbind(read_xlsx(str_c(ruta_po2, meses_labs[1]), skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[2]), skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[3]), skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[4]), skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[5]),skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[6]),skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[7]),skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[8]),skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[9]),skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[10]),skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[11]),skip = 2),
+                   read_xlsx(str_c(ruta_po2, meses_labs[12]),skip = 2)) %>% 
+  rename(numero_orden = `Num. de Orden`) %>% 
+  separate(ID, into = c("registro_1", "registro_2"), sep = " -") %>% 
+  mutate(registro = str_sub(registro_1, start = 4),
+         fecha_extract = str_sub(numero_orden, end = 6),
+         fecha = ymd(fecha_extract),
+         po2 = Resultado) %>% 
+  filter(!is.na(fecha)) 
+
+```
+
+```{r gasometrias union de bases, include = F}
+
+gasometrias <- gaso_fio2 %>% 
+  left_join(select(gaso_po2, numero_orden, po2), by = "numero_orden") %>% 
+  left_join(select(gaso_sat, numero_orden, sato2), by = "numero_orden") %>% 
+  filter(!is.na(po2)&!is.na(sato2))
+
+```
+
+
+```{r índices de oxigenación, include = F, warning= F}
+indices_oxi <- episodios_urgencias_covid %>% 
+  mutate(registro = as.character(registro),
+         fecha = ymd(str_sub(fecha_ingreso, end = 10))) %>% 
+  left_join(select(gasometrias, registro, fecha, fio2, po2, sato2), by = c("registro", "fecha")) %>% 
+  filter(!is.na(fio2)) %>% 
+  group_by(registro, id_episodio) %>% 
+  arrange(fecha) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  mutate(fio2 = if_else(fio2 <21, 0.21, fio2/100),
+         pafi = round(po2/fio2,1),
+         satfi = round(sato2/fio2,1),
+         sofi = round(so2/0.21, 1)) %>% 
+  filter(if_else(po2 >100 & fio2 == 0.21, F, T))
+
+
+#PaFi - SoFi
+
+rho_pafi_sofi <- round(cor.test(indices_oxi$pafi, indices_oxi$sofi, method = "spearman")$estimate,2)
+
+pafi_sofi <- ggplot(indices_oxi, aes(x = pafi, y = sofi))+
+  geom_point(alpha = 0.5, size = 1)+
+  geom_smooth(method = "loess", se = FALSE, size = 2, colour = "blue")+
+  theme_light()+
+  theme(axis.text.x = element_text(size = 14, face = "bold", colour="black"),
+        axis.title.x = element_text(face = "bold", size = 14),
+        axis.ticks = element_line(size = 1, colour = "black"),
+        axis.title.y = element_text(face = "bold", size = 14),
+        axis.text.y = element_text(size = 14, face = "bold", colour = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  scale_y_continuous(limits = c(0, 500))+
+  scale_x_continuous(breaks = seq(0,1000,200),
+                     limits = c(0, 1000))+
+  geom_text(aes(label = str_c("Rho: ",rho_pafi_sofi, " (p <0.001)")), x= 200, y =25, size = 3)+
+  xlab("PaO2 / FiO2")+
+  ylab("SpO2 / FiO2")
+
+#PaFi-Satfi
+rho_pafi_satfi <- round(cor.test(indices_oxi$pafi, indices_oxi$satfi, method = "spearman")$estimate,2)
+
+pafi_satfi <- ggplot(indices_oxi, aes(x = pafi, y = satfi))+
+  geom_point(alpha = 0.5, size = 1)+
+  geom_smooth(method = "loess", se = FALSE, size = 2, colour = "blue")+
+  theme_light()+
+  theme(axis.text.x = element_text(size = 14, face = "bold", colour="black"),
+        axis.title.x = element_text(face = "bold", size = 14),
+        axis.ticks = element_line(size = 1, colour = "black"),
+        axis.title.y = element_text(face = "bold", size = 14),
+        axis.text.y = element_text(size = 14, face = "bold", colour = "black"),
+        plot.title = element_text(size = 14, face = "bold"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  scale_y_continuous(limits = c(0, 500))+
+  scale_x_continuous(breaks = seq(0,1000,200),
+                     limits = c(0, 1000))+
+  geom_text(aes(label = str_c("Rho: ",rho_pafi_satfi, " (p <0.001)")), x= 200, y =25, size = 3)+
+  xlab("PaO2 / FiO2")+
+  ylab("SatO2 / FiO2")
+
+
+#SoFi Satfi
+rho_sofi_satfi <- round(cor.test(indices_oxi$sofi, indices_oxi$satfi, method = "spearman")$estimate,2)
+
+sofi_satfi <- ggplot(indices_oxi, aes(x = sofi, y = satfi))+
+  geom_point(alpha = 0.5, size = 1)+
+  geom_smooth(method = "loess", se = FALSE, size = 2, colour = "blue")+
+  theme_light()+
+  theme(axis.text.x = element_text(size = 14, face = "bold", colour="black"),
+        axis.title.x = element_text(face = "bold", size = 14),
+        axis.ticks = element_line(size = 1, colour = "black"),
+        axis.title.y = element_text(face = "bold", size = 14),
+        axis.text.y = element_text(size = 14, face = "bold", colour = "black"),
+```
+
+
+```{r índices de oxigenación, include = F, warning= F}
+plot.title = element_text(size = 14, face = "bold"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  scale_y_continuous(limits = c(0, 500))+
+  scale_x_continuous(breaks = seq(0,500,100),
+                     limits = c(0, 500))+
+  geom_text(aes(label = str_c("Rho: ",rho_sofi_satfi, " (p <0.001)")), x= 100, y =25, size = 3)+
+  xlab("SpO2 / FiO2")+
+  ylab("SatO2 / FiO2")
+
+
+plots <- pafi_sofi+pafi_satfi+sofi_satfi#guardar en 11 de ancho por 4 de alto
+
+```
+
+
+```{r table 1, include = F}
+quintiles_pafi <- quantile(indices_oxi$pafi, probs = seq(0, 1, 0.2))
+quintiles_satfi <- quantile(indices_oxi$satfi, probs = seq(0, 1, 0.2))
+quintiles_sofi <- quantile(indices_oxi$sofi, probs = seq(0, 1, 0.2))
+
+indices_oxi_quintiles <- indices_oxi %>% 
+  mutate(quintil_pafi = case_when(pafi < quintiles_pafi[2]~"PaO2/FiO2 1",
+                                  pafi >= quintiles_pafi[2]&
+                                    pafi < quintiles_pafi[3]~"PaO2/FiO2 2",
+                                  pafi >= quintiles_pafi[3]&
+                                    pafi < quintiles_pafi[4]~"PaO2/FiO2 3",
+                                  pafi >= quintiles_pafi[4]&
+                                    pafi < quintiles_pafi[5]~"PaO2/FiO2 4",
+                                  pafi >= quintiles_pafi[5]~"PaO2/FiO2 5"),
+         quintil_pafi_homogeneo = case_when(pafi < quintiles_pafi[2]~"Quintil 1",
+                                  pafi >= quintiles_pafi[2]&
+                                    pafi < quintiles_pafi[3]~"Quintil 2",
+                                  pafi >= quintiles_pafi[3]&
+                                    pafi < quintiles_pafi[4]~"Quintil 3",
+                                  pafi >= quintiles_pafi[4]&
+                                    pafi < quintiles_pafi[5]~"Quintil 4",
+                                  pafi >= quintiles_pafi[5]~"Quintil 5"),
+         quintil_satfi = case_when(satfi < quintiles_satfi[2]~"SatO2/FiO2 1",
+                                  satfi >= quintiles_satfi[2]&
+                                    satfi < quintiles_satfi[3]~"SatO2/FiO2 2",
+                                  satfi >= quintiles_satfi[3]&
+                                    satfi < quintiles_satfi[4]~"SatO2/FiO2 3",
+                                  satfi >= quintiles_satfi[4]&
+                                    satfi < quintiles_satfi[5]~"SatO2/FiO2 4",
+                                  satfi >= quintiles_satfi[5]~"SatO2/FiO2 5"),
+         quintil_satfi_homogeneo = case_when(satfi < quintiles_satfi[2]~"Quintil 1",
+                                  satfi >= quintiles_satfi[2]&
+                                    satfi < quintiles_satfi[3]~"Quintil 2",
+                                  satfi >= quintiles_satfi[3]&
+                                    satfi < quintiles_satfi[4]~"Quintil 3",
+                                  satfi >= quintiles_satfi[4]&
+                                    satfi < quintiles_satfi[5]~"Quintil 4",
+                                  satfi >= quintiles_satfi[5]~"Quintil 5"),
+         quintil_sofi = case_when(sofi < quintiles_sofi[2]~"SpO2/FiO2 1",
+                                  sofi >= quintiles_sofi[2]&
+                                    sofi < quintiles_sofi[3]~"SpO2/FiO2 2",
+                                  sofi >= quintiles_sofi[3]&
+                                    sofi < quintiles_sofi[4]~"SpO2/FiO2 3",
+                                  sofi >= quintiles_sofi[4]&
+                                    sofi < quintiles_sofi[5]~"SpO2/FiO2 4",
+                                  sofi >= quintiles_sofi[5]~"SpO2/FiO2 5"),
+         quintil_sofi_homogeneo = case_when(sofi < quintiles_sofi[2]~"Quintil 1",
+                                  sofi >= quintiles_sofi[2]&
+                                    sofi < quintiles_sofi[3]~"Quintil 2",
+                                  sofi >= quintiles_sofi[3]&
+                                    sofi < quintiles_sofi[4]~"Quintil 3",
+                                  sofi >= quintiles_sofi[4]&
+                                    sofi < quintiles_sofi[5]~"Quintil 4",
+                                  sofi >= quintiles_sofi[5]~"Quintil 5"))
+
+
+ table(PAFI=indices_oxi_quintiles$quintil_pafi)
+ table(PAFI=indices_oxi_quintiles$quintil_sofi)
+ table(PAFI=indices_oxi_quintiles$quintil_satfi)
+
+par(mfrow=c(1,3))
+#CIRCLE PLOT PAFI-SATFI hay que guardar cada una por separado
+chordDiagram(select(indices_oxi_quintiles, quintil_pafi, quintil_satfi),
+             order= c("PaO2/FiO2 1", "PaO2/FiO2 2", "PaO2/FiO2 3",
+                       "PaO2/FiO2 4","PaO2/FiO2 5", "SatO2/FiO2 1", "SatO2/FiO2 2",
+                       "SatO2/FiO2 3", "SatO2/FiO2 4", "SatO2/FiO2 5"),
+             grid.col = c(`PaO2/FiO2 1`="red", `PaO2/FiO2 2`="red",
+                          `PaO2/FiO2 3`="red",`PaO2/FiO2 4`="red",
+                          `PaO2/FiO2 5`="red",
+                          `SatO2/FiO2 1`="blue",`SatO2/FiO2 2`="blue",
+                          `SatO2/FiO2 3`="blue",`SatO2/FiO2 4`="blue",
+                          `SatO2/FiO2 5`="blue"),
+             col = "gray",
+             annotationTrack = c("name", "grid"))
+title("A)")
+
+#CIRCLE PLOT PAFI-SOFI
+chordDiagram(select(indices_oxi_quintiles, quintil_pafi, quintil_sofi),
+             order= c("PaO2/FiO2 1", "PaO2/FiO2 2", "PaO2/FiO2 3",
+                       "PaO2/FiO2 4","PaO2/FiO2 5", "SpO2/FiO2 1", "SpO2/FiO2 2", "SpO2/FiO2 3",
+                       "SpO2/FiO2 4","SpO2/FiO2 5"),
+             grid.col = c(`PaO2/FiO2 1`="red", `PaO2/FiO2 2`="red",
+                          `PaO2/FiO2 3`="red",`PaO2/FiO2 4`="red",
+                          `PaO2/FiO2 5`="red",
+                          `SpO2/FiO2 1`="green", `SpO2/FiO2 2`="green",
+                          `SpO2/FiO2 3`="green",`SpO2/FiO2 4`="green",
+                          `SpO2/FiO2 5`="green"),
+             col = "gray",
+             annotationTrack = c("name", "grid"))
+title("B)")
+
+#CIRCLE PLOT SOFI-SATFI
+chordDiagram(select(indices_oxi_quintiles, quintil_sofi, quintil_satfi),
+             order= c("SpO2/FiO2 1", "SpO2/FiO2 2", "SpO2/FiO2 3",
+                       "SpO2/FiO2 4","SpO2/FiO2 5", "SatO2/FiO2 1", "SatO2/FiO2 2",
+                       "SatO2/FiO2 3", "SatO2/FiO2 4", "SatO2/FiO2 5"),
+             grid.col = c(`SpO2/FiO2 1`="green", `SpO2/FiO2 2`="green",
+                          `SpO2/FiO2 3`="green",`SpO2/FiO2 4`="green",
+                          `SpO2/FiO2 5`="green",
+                          `SatO2/FiO2 1`="blue",`SatO2/FiO2 2`="blue",
+                          `SatO2/FiO2 3`="blue",`SatO2/FiO2 4`="blue",
+                          `SatO2/FiO2 5`="blue"),
+             col = "gray",
+             annotationTrack = c("name", "grid"))
+title("C)")
+             
+
+
+par(mfrow=c(1,1))
+
+
+fivenum(indices_oxi_quintiles$pafi)
+fivenum(indices_oxi_quintiles$satfi)
+fivenum(indices_oxi_quintiles$sofi)
+fivenum(indices_oxi_quintiles$fio2)
+fivenum(indices_oxi_quintiles$so2)
+fivenum(indices_oxi_quintiles$po2)
+fivenum(indices_oxi_quintiles$sato2)
+
+
+sum(indices_oxi_quintiles$quintil_pafi_homogeneo==
+      indices_oxi_quintiles$quintil_sofi_homogeneo&
+      indices_oxi_quintiles$quintil_satfi_homogeneo==
+      indices_oxi_quintiles$quintil_pafi_homogeneo&
+      indices_oxi_quintiles$quintil_satfi_homogeneo==
+      indices_oxi_quintiles$quintil_sofi_homogeneo)
+
+785/2960
+
+```
+
